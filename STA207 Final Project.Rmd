@@ -1,0 +1,264 @@
+---
+title: "STA 207 FInal"
+author: "Ziqin Wang"
+date: "2022/2/12"
+output: html_document
+---
+
+# 1. Introduction
+
+In this project, we are focused on analyzing the data of Covid-19 from WHO, and our main focus here in this project is whether gender matters in the death rate of Covid-19 patients and hows the elder patient's death rate is different from other age groups. To do so I need two models, one is ANOVA model and another is survival model, ANOVA model is used to make sure that all the predictors I mentioned do have some sort of relationship with the death rate of Covid-19, and the survival models are to make sure that the how the death rate being impacted by different gender or age group, and we could even make some prediction on the hazard rate and survival rate of different gender and age group who have Covid-19.
+
+# 2. Background 
+
+Since the outbreak of COVID-19, SARS-CoV-2 at the beginning of 2020, it has already become a major health issue for most people in the world.
+With a total of 418 million infected cases and 5.85 million death cases all around the world, for now, the Coranavarius pandemic has become one of the most horrible public health incidents in human history. 
+
+As we all know that the death rate of Covid-19 could be well controlled only if you have on time hospitalization, but somehow the death rate could still be quite higher in some sub-population compared to other sub-population, and in this project, despite the data we obtained from the WHO, we also managed to get the patient data from the CDC of Mexico (it is an open-source data), in the data set, it contains 14 million patient's data which include their personal information, their life hobbit, the different hospitalization they received after they get infected and somehow the most important things are their estimated infected data, death date (if the patient is dead) and the date they leave the hospital. 
+
+And in our survival analysis part of this project, I choose 500000 samples out of 14 million, which those samples have the similar life hobby, and they received hospitalization that almost the same, the only difference among them is their gender and age, which are two particular variables we are interested.  
+
+# 3. Design and settings
+
+After we got the data, it still needs to be processed, such as removing the missing terms, merging different data sets, and constructing the predictors necessary for the analysis based on the existing data we have. 
+
+First, let's deal with the WHO Covid-19 data and another data set including the related men's population, women's population, and population of age 65 and up, both data set are based on different countries. And after removing the missing data point and merging them, we got a combined data set that includes the total death case of each country, the men's population, women's population, and the population of age 65 and up of each country. And I categorize those variables by some certain way, like for the men's population, I make it into 3 levels, if the percentage of men in a country is below 49 percent, then it will be classified as less man and more women population, if the percentage of men in the country is between 49 and 51, then this country will be classified as normal men and normal women population, finally for the age 65 up the population, if the population of age 65 up is beyond 16% of total population (according to the definition provided by the UNESCO), then this country will be classified as a country with too many elderly people. 
+
+Second, we need to deal with the patient's data, this is way more complicated to deal with since we have 14 million samples and 41 variables in this data set, and we need to choose a meaning sample, I choose a sample of 50000 patients, which they revised the same hospitalization according to the data, he data rank the hospital in Mexico into 12 degrees and I choose the rank 5 to 10 since those over 95% of patients in Mexico are in the hospital of those rank. Also, those patients have the same health conditions before they are infected with covid-19, they have no diabetes or other long-term chronics. At last, those patients have similar life hobby, they don't smoke and shows no signs of alcoholism. So the variables here we are concerned about are only with age and genders, others are mostly set to be the same. 
+
+Third, to do the survival analysis for the patients, we also need the event indicator and the time duration variables, and the time duration variable indicates their survival time until they died, if no death then the time is between their infected date to the date they leave the hospital.  
+
+Last, in our projects, I won't include any causal inference, since all my variables here are population, time, death or alive event and the death count, they are all variables with no treatment effects, basically are not controlled by the data collector or anyone who analysis it. 
+
+# 4. Initial analysis
+
+## 4.1 Initial construction of ANOVA model
+
+After we got the combined data of the covid-19, we could look at the histogram of it before any transformation and classification.
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+library(readr)
+library(dplyr)
+WHO_data_summary = read_csv("Survival data/WHO data summary.csv")
+
+WHO_data_summary = WHO_data_summary[-c(1)]
+
+WHO_data_summary = filter(WHO_data_summary,`Deaths - cumulative total`>0)
+
+par(mfrow = c(2,2))
+
+hist(WHO_data_summary$`Deaths - cumulative total`,xlim=c(0,400000),main = "total death")
+
+hist(WHO_data_summary$`Men's population`,xlim=c(0,200000000),main = "Men's population`")
+
+hist(WHO_data_summary$`Women's populaion`,xlim=c(0,200000000),main = "Women's population`")
+
+hist(WHO_data_summary$`Age 65 up`,xlim=c(0,50000000),main = "age 65 up population`")
+
+par(mfrow = c(1,1))
+
+```
+
+I will just construct an ANOVA model with 3 fixed effects terms here. 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+#Anova
+aov1 = aov(`Deaths - cumulative total`~`Men's population`+`Women's populaion`+`Age 65 up`,data = WHO_data_summary)
+
+summary(aov1)
+```
+
+As you could see from the summary result of my anova model, if we are try to do a hypothesis test on each effects terms to see whether they are 0 or not, if the null hypothesis is saying that all the effects terms are 0, I think we could reject that null hypothesis since we could see that all the p-value from the F-test all basically smaller then 0.01, so here we could just conclude that the death rate of certain sub population could related to their gender and age groups, but the problem is that we have no exact idea how it works and whether men or women have higher death rate. we still need more complex and precise study on that, but before we continue onto the survival analysis part, we need to do some model diagnostics to our anova model to make sure our model is proper and the result we obtained from it is also convinced. 
+
+## 4.2 Continue analysis on the initial ANOVA model
+
+To see whether our ANOVA model above is good enough, we need to implement some new method, here I use the box-cox transformation to see whether our response variables in the model need any sorts of transformation. 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+library(MASS)
+bc <- boxcox(aov1,plotit = TRUE,xlab = expression(lambda), ylab = "log-Likelihood")
+```
+
+So with the plot of box-cox transformation, since the optimal $\lambda$ value of the box-cox transformation is close to 0, 
+then we will choose to use the log transformation on the response variables. Thus we have the following new anova model with the log transformed response variable. 
+
+The model is defined like this, 
+
+$$Y_{i,j,k,t} = \mu_{...}+\alpha_{i..}+\beta_{.j.}+\gamma_{..k}+\epsilon_{i,j,k,t}$$, with that $\epsilon_{i,j,k,t}$ is the independent variables distributed on $N(0,\sigma^2)$, where $i$ and $j$ are range from 1 to 3, then $k$ range from 1 to 2, and the t is the number of countries in our data set. 
+
+Also we have the following constrains, 
+
+$$\sum\alpha_i = \sum\beta_j = \sum\gamma_k = 0$$.
+
+There are no interaction effects terms in our model since I have checked that it will be 0 for all $i,j,k$. 
+
+```{r,echo=FALSE}
+
+aov1_final = aov(log(`Deaths - cumulative total`)~`Men's population`+`Women's populaion`+`Age 65 up`,data = WHO_data_summary)
+
+```
+
+
+## 4.3 Model diagnostics on the final anova model 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+par(mfrow = c(2,2))
+
+plot(aov1_final)
+
+par(mfrow = c(1,1))
+
+```
+
+From the Residuals vs fitted value plot and the Normal Q-Q plot, we could see that the error terms normality assumptions being violate a little, and based on a such big data set we have we could ignore that, also from the following two plots we see that there are not many outliers here need to pay attention on, so basically our model here is good enough. 
+
+# Continue analysis (survival analysis)
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+`220216COVID19MEXICO` = read.csv("D:/OneDrive - University of California, Davis/Desktop/STA207 New Final/Survival data/datos_abiertos_covid19/220216COVID19MEXICO.csv")
+
+library(dplyr)
+
+data_null = `220216COVID19MEXICO`
+
+data_1 = sample_n(data_null,50000)
+
+data_1$EDAD = as.integer(ifelse(data_1$EDAD<=65, 1,2 ))
+
+data_1$status = as.integer(ifelse(data_1$FECHA_DEF=="9999-99-99", 0, 1))
+
+data_1$FECHA_DEF = as.Date(ifelse(data_1$FECHA_DEF=="9999-99-99", "1111-11-11", data_1$FECHA_DEF))
+```
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+library(dbplyr)
+
+data_1$time = as.numeric(ifelse(difftime(as.Date(data_1$FECHA_DEF),as.Date(data_1$FECHA_SINTOMAS),units = "days")<(-800), difftime(as.Date(data_1$FECHA_ACTUALIZACION),as.Date(data_1$FECHA_SINTOMAS),units = "days"), difftime(as.Date(data_1$FECHA_DEF),as.Date(data_1$FECHA_SINTOMAS),units = "days")))
+
+```
+
+As in the previous sections I have make my data set suitable for survival analysis by creating two crucial variables which is necessary for the survival analysis. We could just begin to analysis on the survival rate and the Hazard rate of people in different gender and different age group. 
+
+So here I divide the age into two groups, with age older than 65 consider as elderly, and the age 65 or less is consider as young and middle age people. 
+
+He for the estimated survival curve for the current data and also for the future situation, I implemented the Kaplan-Meier estimator for our survival rate, and the estimator on the survival function $S(t)$ (the probability that subject is dead at or before time t) is given by $$\hat S(t) = \Pi_{i:t_i<i}(1-\frac{d_i}{n_i})$$, and $t_i$ is the time which the patient died or leave the the hospital or the experiment, and the $n_i$ represent the number of individual which known to be survived by the end of the experiment. And with this estimator and the data we have we could the corresponding survival curve for each of the subpopulation. 
+
+You could see their survival rate v.s time plot here, first plot is for the different age group, the second is for different gender. 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+#Survival
+
+library(survival)
+library(ggplot2)
+library(survminer)
+
+survival_covid = Surv(time = data_1$time,event = data_1$status)
+
+#Survival curve
+
+km_covid_curve = survfit(survival_covid~EDAD,data = data_1)
+
+ggsurvplot(km_covid_curve,
+           xlab = "Time in days",
+            ylab = "Km survive curve for different Gender")
+```
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+km_covid_curve_2 = survfit(survival_covid~SEXO,data = data_1)
+
+ggsurvplot(km_covid_curve_2,
+           xlab = "Time in days",
+           ylab = "Km survive curve for different Gender",
+           ylim = c(0.8, 1))
+```
+
+For the first plot, the red line represent survival rate of the young and middle age people, and the light blue line represent survival rate of the elderly people, for the second plot, the red line represent the survival rate of the women and the light blue line represent the survival rate of the men. 
+
+As what we see from the estimated survival curves here, young and middle age people have higher survival rate compare to elderly people among the entire time line, but for both group, their survival rate will remain stable. And women have higher survival rate compare to men across all the time line, but also for both group, their survival rate will remain stable. The reason for both curves to remain straight after a certain time point is mainly because most the death case of covid-19 didn't survive more then 50 days. 
+
+To ensure our result from the survival curves, I also got the cumulative hazard plot for both Gender and age, as the first plot is for hazard rate of different age group, the second plot is for hazard rate of different gender group. 
+
+And here I implement the Nelson-Aalen estimator for estimating the survival rate, and one advantage of this estimator is that it could also works on a censored or incomplete data, and the estimator is given by $$\hat H(t) = \sum_{t_i<t}\frac{d_i}{n_i}$$, and it shares the same notation in the survival estimator. Also with this function we could show a rather accurate plot of hazard rate and it should reflect our result in the survival curve. 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+#Hazard plot
+
+time_vec = 0:800
+
+NAcurves_covid = survfit(survival_covid~EDAD,data = data_1,type = "fleming-harrington")
+
+sf1_covid = stepfun(NAcurves_covid[1]$time,c(1,NAcurves_covid[1]$surv))
+sf2_covid = stepfun(NAcurves_covid[2]$time,c(1,NAcurves_covid[2]$surv))
+
+cumuharz1_covid = -log(sf1_covid(time_vec))
+cumuharz2_covid = -log(sf2_covid(time_vec))
+
+plot(time_vec,cumuharz2_covid,type = "l",ylab = "Cumulative Hazard",
+     main = "Cumulative hazard of differnet age group",col = "red",xlab = "time")
+lines(time_vec,cumuharz1_covid)
+legend("bottomright",legend = c("More than 65","Less then 65"),col = c("red","black"),lty = 1)
+```
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+time_vec = 0:800
+
+NAcurves_covid_2 = survfit(survival_covid~SEXO,data = data_1,type = "fleming-harrington")
+
+sf1_covid_2 = stepfun(NAcurves_covid_2[1]$time,c(1,NAcurves_covid_2[1]$surv))
+sf2_covid_2 = stepfun(NAcurves_covid_2[2]$time,c(1,NAcurves_covid_2[2]$surv))
+
+cumuharz1_covid_2 = -log(sf1_covid_2(time_vec))
+cumuharz2_covid_2 = -log(sf2_covid_2(time_vec))
+
+plot(time_vec,cumuharz2_covid_2,type = "l",ylab = "Cumulative Hazard",
+     main = "Cumulative hazard of differnet Gender",col = "red",xlab = "time")
+lines(time_vec,cumuharz1_covid_2)
+legend("bottomright",legend = c("Men","Women"),col = c("red","black"),lty = 1)
+
+```
+
+Basically, the result here convince our result from the survival curve plot, here from the plot you could easily see that Elder people and Men have higher hazard rate. So after we got the result here, still we need to see whether our model is good. 
+
+## Model diagnostics on the Analysis model 
+
+Here we using the plot of Cumulative Hazard of the Cox-snell residuals, basically for this plot, if the hazard rate curve is close to the $y=x$ line then we could conclude that our hazard model and survival model is a good fit. As you can see that bascilly the Hazard rate line is almost overlap with the $y=x$ line. So our survival model is good here. 
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+cox_covid = coxph(survival_covid~EDAD+SEXO,data = data_1)
+
+covid.mart = residuals(cox_covid,type = "martingale")
+
+covid.cs = data_1$status-covid.mart
+
+surv.csr = survfit(Surv(covid.cs,data_1$status)~1,type = "fleming-harrington")
+
+plot(surv.csr,fun = "cumhaz")
+
+abline(0,1)
+
+title("Cumulative Hazard of Cox-snell Residuals")
+```
+
+# Conclusion and futher discussion
+
+So this project proved the idea that elder people and men have a higher risk of death when infected with covid-19, but the problem here is that we only have the data for the Mexico people, if I could get data from more countries, maybe I could raise a global conclusion saying that all elder people and all men around the world have a higher risk of death. While other clinical factors may still be very valuable and I hope during the continuous analysis on the data set I got I could give some more meaning conclusion that could help the hospital or the healthcare industry to help prevent the death of Covid-19.
+
+# Reference. 
+
+Salinas-Escudero, G., Carrillo-Vega, M.F., Granados-García, V. et al. A survival analysis of COVID-19 in the Mexican population. BMC Public Health 20, 1616 (2020). https://doi.org/10.1186/s12889-020-09721-2
+
+Situation report - 154. Coronavirus disease 2022 (COVID-19) [Internet]. 2022. [cited 17th Feb 2022]. Available from: https://www.who.int/publications/m/item/weekly-operational-update-on-covid-19---15-february-2022
+
+Salud, Secretaría  De. “Datos Abiertos Dirección General De Epidemiología - Gob.mx.” Open Data General Directorate of Epidemiology, Gobierno De Mexico, 17 Feb. 2022, https://www.gob.mx/salud/documentos/datos-abiertos-152127. 
+
+“Who Coronavirus (COVID-19) Dashboard.” World Health Organization, World Health Organization, 17 Feb. 2022, https://covid19.who.int/. 
+
+# Info session
+
+```{r,echo=FALSE,message=FALSE,warning=FALSE}
+
+sessionInfo()
+```
